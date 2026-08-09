@@ -1,27 +1,27 @@
 import requests
 
 
-URL = "https://reco-public.rec.mp.microsoft.com/channels/Reco/V8.0/Lists/Computed/Deal"
+URL = "https://displaycatalog.mp.microsoft.com/v7.0/products"
 
 PARAMS = {
-    "Market": "US",
-    "Language": "EN",
-    "ItemTypes": "Game",
-    "deviceFamily": "Windows.Xbox",
-    "count": 20,
-    "skipitems": 0,
+    "market": "US",
+    "languages": "en-us",
+    "bigIds": "9NJRX71M5X9P",
 }
 
 
 def main():
     print("================================")
-    print("Xbox Store API Test")
+    print("Xbox Microsoft Catalog API Test")
     print("================================")
 
     response = requests.get(
         URL,
         params=PARAMS,
         timeout=30,
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        },
     )
 
     print(f"HTTP Status: {response.status_code}")
@@ -34,17 +34,10 @@ def main():
 
     print("Response received successfully!")
     print(f"Top-level keys: {list(data.keys())}")
-
-    items = data.get("Items", [])
-
-    print(f"Items found: {len(items)}")
     print()
 
-    for item in items[:5]:
-        print("--------------------------------")
-        print(f"ID: {item.get('Id')}")
-        print(f"Title: {item.get('Title')}")
-        print(f"Type: {item.get('ItemType')}")
+    print("Raw response:")
+    print(response.text[:5000])
 
 
 if __name__ == "__main__":
