@@ -15,7 +15,7 @@ CHANNEL_KEY = "BROWSE_CHANNELID=_FILTERS="
 
 # Start small while testing.
 # 5 pages = up to 125 Xbox products.
-MAX_PAGES = 5
+MAX_PAGES = 700
 
 HEADERS = {
     "User-Agent": (
