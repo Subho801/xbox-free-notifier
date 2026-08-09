@@ -1,99 +1,29 @@
 import requests
 import re
 import json
-import base64
 
 
-URL = "https://www.xbox.com/en-US/games/browse"
+PAGE_URL = "https://www.xbox.com/en-US/games/browse"
+API_URL = "https://emerald.xboxservices.com/xboxcomfd/browse?locale=en-US"
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/131.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": "application/json",
+    "x-ms-api-version": "1.1",
 }
 
 
-def try_decode(value):
-    """Try to decode a Base64 JSON string."""
-
-    if not isinstance(value, str):
-        return None
-
-    try:
-        decoded = base64.b64decode(
-            value + "=" * (-len(value) % 4)
-        ).decode("utf-8")
-
-        data = json.loads(decoded)
-
-        if isinstance(data, dict):
-            if (
-                "HasMore" in data
-                and "SkipCount" in data
-                and "TotalCount" in data
-            ):
-                return data
-
-    except Exception:
-        pass
-
-    return None
-
-
-def find_continuation_tokens(obj, path="root"):
-    """Recursively find Xbox continuation tokens."""
-
-    results = []
-
-    if isinstance(obj, dict):
-
-        for key, value in obj.items():
-
-            decoded = try_decode(value)
-
-            if decoded:
-                results.append({
-                    "path": f"{path}.{key}",
-                    "encoded": value,
-                    "decoded": decoded,
-                })
-
-            results.extend(
-                find_continuation_tokens(
-                    value,
-                    f"{path}.{key}"
-                )
-            )
-
-    elif isinstance(obj, list):
-
-        for i, value in enumerate(obj):
-
-            results.extend(
-                find_continuation_tokens(
-                    value,
-                    f"{path}[{i}]"
-                )
-            )
-
-    return results
-
-
-def main():
-
-    print("================================")
-    print("Xbox Continuation Token Test")
-    print("================================")
+def get_page_state():
 
     response = requests.get(
-        URL,
+        PAGE_URL,
         headers=HEADERS,
         timeout=30,
     )
-
-    print(f"HTTP Status: {response.status_code}")
 
     response.raise_for_status()
 
@@ -104,44 +34,151 @@ def main():
     )
 
     if not match:
-        raise RuntimeError(
-            "PRELOADED_STATE not found"
-        )
+        raise RuntimeError("PRELOADED_STATE not found")
 
-    state = json.loads(match.group(1))
+    return json.loads(match.group(1))
 
-    print("PRELOADED_STATE parsed")
-    print()
 
-    results = find_continuation_tokens(state)
+def main():
 
-    print(
-        f"Continuation tokens found: "
-        f"{len(results)}"
+    print("================================")
+    print("Xbox Browse Pagination Test")
+    print("================================")
+
+    state = get_page_state()
+
+    print("✅ Xbox page loaded")
+
+    # Current Xbox structure:
+    channel_data = (
+        state
+        .get("core2", {})
+        .get("channels", {})
+        .get("channelData", {})
     )
 
-    for i, result in enumerate(results, 1):
+    # Find the BROWSE channel dynamically
+    browse_data = None
 
-        print()
-        print("=" * 70)
-        print(f"TOKEN #{i}")
-        print("=" * 70)
+    for key, value in channel_data.items():
 
-        print(f"Path:")
-        print(result["path"])
+        if "BROWSE_" in key:
+            browse_data = (
+                value
+                .get("data", {})
+            )
 
-        decoded = result["decoded"]
+            print(f"✅ Found channel: {key}")
+            break
 
-        print()
-        print("Decoded:")
-        print(json.dumps(
-            decoded,
-            indent=2
-        )[:5000])
+    if not browse_data:
+        raise RuntimeError(
+            "BROWSE channel data not found"
+        )
 
-        print()
-        print("EncodedCT length:")
-        print(len(result["encoded"]))
+    encoded_ct = browse_data.get("encodedCT")
+
+    if not encoded_ct:
+        raise RuntimeError(
+            "encodedCT not found"
+        )
+
+    print(f"Current token length: {len(encoded_ct)}")
+
+    # --------------------------------------------------
+    # Request next page
+    # --------------------------------------------------
+
+    payload = {
+        "ChannelKeyToBeUsedInResponse": "BROWSE_",
+        "EncodedCT": encoded_ct,
+        "Filters": "e30=",
+        "ReturnFilters": False,
+    }
+
+    print()
+    print("Requesting next page...")
+
+    response = requests.post(
+        API_URL,
+        headers=HEADERS,
+        json=payload,
+        timeout=30,
+    )
+
+    print(
+        f"Browse API HTTP Status: "
+        f"{response.status_code}"
+    )
+
+    print()
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    print("✅ Page 2 received")
+    print()
+    print("Top-level keys:")
+    print(list(data.keys()))
+
+    # --------------------------------------------------
+    # Products
+    # --------------------------------------------------
+
+    products = data.get(
+        "productSummaries",
+        []
+    )
+
+    print()
+    print(
+        f"Products returned: "
+        f"{len(products)}"
+    )
+
+    for product in products:
+
+        print(
+            f"{product.get('productId')} | "
+            f"{product.get('title')}"
+        )
+
+    # --------------------------------------------------
+    # Next continuation token
+    # --------------------------------------------------
+
+    channels = data.get(
+        "channels",
+        {}
+    )
+
+    browse_channel = channels.get(
+        "BROWSE_",
+        {}
+    )
+
+    next_data = browse_channel.get(
+        "data",
+        {}
+    )
+
+    next_token = next_data.get(
+        "encodedCT"
+    )
+
+    print()
+
+    if next_token:
+        print("✅ Next continuation token received")
+        print(
+            f"Next token length: "
+            f"{len(next_token)}"
+        )
+    else:
+        print(
+            "❌ No next continuation token"
+        )
 
 
 if __name__ == "__main__":
