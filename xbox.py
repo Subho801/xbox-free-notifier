@@ -2,7 +2,6 @@ import requests
 import re
 from urllib.parse import urljoin
 
-
 PAGE_URL = "https://www.xbox.com/en-US/games/browse"
 
 HEADERS = {
@@ -13,24 +12,32 @@ HEADERS = {
     )
 }
 
+KEYWORDS = [
+    "Search/GetMoreData",
+    "Search/GetInitialChannelData",
+    "ChannelKeyToBeUsedInResponse",
+    "EncodedCT",
+    "ChannelId",
+    "addAuthorization",
+    "RequestFactory"
+]
+
 
 def main():
-
     print("================================")
-    print("Xbox Browse Authorization Trace")
+    print("Xbox Emerald Request Discovery")
     print("================================")
 
-    r = requests.get(
+    page = requests.get(
         PAGE_URL,
         headers=HEADERS,
         timeout=30
     )
-
-    r.raise_for_status()
+    page.raise_for_status()
 
     scripts = re.findall(
         r'<script[^>]+src=["\']([^"\']+)["\']',
-        r.text,
+        page.text,
         re.I
     )
 
@@ -41,67 +48,66 @@ def main():
 
     print(f"JavaScript files: {len(scripts)}")
 
-    keywords = [
-        "addAuthorization:!0",
-        "addAuthorization:true",
-        "MsApiVersion",
-        "EmeraldXbetService",
-        "getOrFetchXboxToken",
-        "xboxToken",
-    ]
-
-    for script_number, url in enumerate(scripts, 1):
+    for number, url in enumerate(scripts, 1):
 
         try:
-
-            js_response = requests.get(
+            r = requests.get(
                 url,
                 headers=HEADERS,
                 timeout=30
             )
 
-            if js_response.status_code != 200:
+            if r.status_code != 200:
                 continue
 
-            js = js_response.text
+            js = r.text
 
-            for keyword in keywords:
+            matches = []
 
-                positions = [
-                    m.start()
-                    for m in re.finditer(
-                        re.escape(keyword),
-                        js,
-                        re.I
-                    )
-                ]
+            for keyword in KEYWORDS:
+                for m in re.finditer(
+                    re.escape(keyword),
+                    js,
+                    re.I
+                ):
+                    matches.append((m.start(), keyword))
 
-                if not positions:
+            if not matches:
+                continue
+
+            print()
+            print("=" * 100)
+            print(f"SCRIPT #{number}")
+            print(url)
+            print("=" * 100)
+
+            # Deduplicate nearby matches
+            positions = []
+            seen = set()
+
+            for pos, keyword in sorted(matches):
+
+                bucket = pos // 3000
+
+                if bucket in seen:
                     continue
 
+                seen.add(bucket)
+                positions.append((pos, keyword))
+
+            for pos, keyword in positions[:15]:
+
+                start = max(0, pos - 5000)
+                end = min(len(js), pos + 8000)
+
                 print()
-                print("=" * 100)
-                print(f"SCRIPT #{script_number}")
-                print(url)
                 print(f"KEYWORD: {keyword}")
-                print(f"OCCURRENCES: {len(positions)}")
-                print("=" * 100)
-
-                for pos in positions[:10]:
-
-                    start = max(0, pos - 4000)
-                    end = min(
-                        len(js),
-                        pos + 6000
-                    )
-
-                    print(js[start:end])
-                    print()
-                    print("-" * 100)
+                print("-" * 100)
+                print(js[start:end])
+                print("-" * 100)
 
         except Exception as e:
-
-            print(f"ERROR: {e}")
+            print(f"ERROR {url}: {e}")
 
 
 if __name__ == "__main__":
