@@ -7,10 +7,14 @@ PAGE_URL = "https://www.xbox.com/en-US/games/browse"
 API_URL = "https://emerald.xboxservices.com/xboxcomfd/browse?locale=en-US"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
     "x-ms-api-version": "1.1",
+    "MS-CV": "XboxFreeNotifier.1",
 }
-
 
 def main():
     print("================================")
