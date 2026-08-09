@@ -310,6 +310,25 @@ def process_page(data, page_number):
         data.get("availabilitySummaries", [])
     )
 
+    # ============================================================
+# TEMPORARY DEBUG - FIRST PAGE ONLY
+# ============================================================
+
+if page_number == 1:
+    print()
+    print("================================")
+    print("AVAILABILITY SAMPLE")
+    print("================================")
+
+    for availability in availability_summaries[:5]:
+        print()
+        print(json.dumps(availability, indent=2))
+
+    print()
+    print("================================")
+    print("END AVAILABILITY SAMPLE")
+    print("================================")
+
     print()
     print("--------------------------------")
     print(f"PAGE {page_number}")
