@@ -3,43 +3,58 @@ import re
 import json
 
 
-PAGE_URL = "https://www.xbox.com/en-US/games/browse"
-
-BROWSE_API = "https://emerald.xboxservices.com/xboxcomfd/browse"
+URL = "https://www.xbox.com/en-US/games/browse"
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/131.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json",
+    )
 }
+
+
+def find_keys(obj, wanted, path="root"):
+    """Find every occurrence of selected keys recursively."""
+
+    if isinstance(obj, dict):
+
+        for key, value in obj.items():
+
+            if str(key).lower() in wanted:
+                print()
+                print("=" * 70)
+                print(f"FOUND: {key}")
+                print(f"PATH:  {path}.{key}")
+                print("=" * 70)
+
+                if isinstance(value, (dict, list)):
+                    print(json.dumps(value, indent=2)[:5000])
+                else:
+                    print(value)
+
+            find_keys(value, wanted, f"{path}.{key}")
+
+    elif isinstance(obj, list):
+
+        for i, value in enumerate(obj):
+            find_keys(value, wanted, f"{path}[{i}]")
 
 
 def main():
 
     print("================================")
-    print("Xbox Browse API Discovery")
+    print("Xbox Channel Structure Test")
     print("================================")
 
-    # --------------------------------------------------
-    # 1. Get Xbox browse page
-    # --------------------------------------------------
-
     response = requests.get(
-        PAGE_URL,
+        URL,
         headers=HEADERS,
         timeout=30,
     )
 
-    print(f"Page HTTP Status: {response.status_code}")
-
+    print(f"HTTP Status: {response.status_code}")
     response.raise_for_status()
-
-    # --------------------------------------------------
-    # 2. Extract PRELOADED_STATE
-    # --------------------------------------------------
 
     match = re.search(
         r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});',
@@ -54,110 +69,76 @@ def main():
 
     print("PRELOADED_STATE parsed")
 
-    # --------------------------------------------------
-    # 3. Inspect channels
-    # --------------------------------------------------
-
     core2 = state.get("core2", {})
 
-    channels = core2.get("channels", {})
+    print()
+    print("core2 keys:")
+    print(list(core2.keys()))
+
+    # ----------------------------------------
+    # channelData
+    # ----------------------------------------
+
+    channel_data = core2.get("channelData", {})
 
     print()
-    print("core2 channels:")
-    print(list(channels.keys()))
+    print("channelData type:", type(channel_data).__name__)
 
-    # --------------------------------------------------
-    # 4. Find BROWSE_ channel
-    # --------------------------------------------------
+    if isinstance(channel_data, dict):
+        print("channelData keys:")
+        for key in channel_data.keys():
+            print(f"  - {key}")
 
-    browse = channels.get("BROWSE_")
+    # ----------------------------------------
+    # channelMetadata
+    # ----------------------------------------
 
-    if not browse:
-        print()
-        print("❌ BROWSE_ channel not found")
-        return
-
-    print()
-    print("✅ BROWSE_ channel found")
-
-    print("BROWSE_ keys:")
-    print(list(browse.keys()))
-
-    data = browse.get("data")
-
-    if not data:
-        print()
-        print("❌ BROWSE_ data not found")
-        return
+    channel_metadata = core2.get("channelMetadata", {})
 
     print()
-    print("BROWSE_ data keys:")
-    print(list(data.keys()))
+    print("channelMetadata type:", type(channel_metadata).__name__)
 
-    # --------------------------------------------------
-    # 5. Check for encoded continuation token
-    # --------------------------------------------------
+    if isinstance(channel_metadata, dict):
+        print("channelMetadata keys:")
+        for key in channel_metadata.keys():
+            print(f"  - {key}")
 
-    encoded_ct = data.get("encodedCT")
-
-    print()
-
-    if encoded_ct:
-        print("✅ encodedCT found")
-        print(f"encodedCT length: {len(encoded_ct)}")
-        print(f"encodedCT preview: {encoded_ct[:100]}...")
-    else:
-        print("❌ encodedCT not found")
-
-    # --------------------------------------------------
-    # 6. Check products already returned
-    # --------------------------------------------------
-
-    products = data.get("productSummaries", [])
-
-    print()
-    print(f"Products in BROWSE_ data: {len(products)}")
-
-    for product in products[:5]:
-        print()
-        print("Product:")
-        print(f"  ID:    {product.get('productId')}")
-        print(f"  Title: {product.get('title')}")
-
-    # --------------------------------------------------
-    # 7. Test browse API if token exists
-    # --------------------------------------------------
-
-    if not encoded_ct:
-        return
+    # ----------------------------------------
+    # Search recursively
+    # ----------------------------------------
 
     print()
     print("================================")
-    print("Testing Xbox Browse Backend")
+    print("Searching for browse/token fields")
     print("================================")
 
-    payload = {
-        "ChannelKeyToBeUsedInResponse": "BROWSE_",
-        "EncodedCT": encoded_ct,
-        "Filters": "e30=",
-        "ReturnFilters": False,
+    wanted = {
+        "browsetype",
+        "channelkey",
+        "channelname",
+        "encodedct",
+        "continuationtoken",
+        "productids",
+        "productsummaries",
     }
 
-    browse_response = requests.post(
-        BROWSE_API,
-        headers=HEADERS,
-        json=payload,
-        timeout=30,
-    )
-
-    print(
-        f"Browse API HTTP Status: "
-        f"{browse_response.status_code}"
-    )
+    find_keys(state, wanted)
 
     print()
-    print("Response preview:")
-    print(browse_response.text[:5000])
+    print("================================")
+    print("Searching for product fields")
+    print("================================")
+
+    wanted_products = {
+        "productid",
+        "producttitle",
+        "title",
+        "listprice",
+        "msrp",
+        "discountpercentage",
+    }
+
+    find_keys(core2, wanted_products)
 
 
 if __name__ == "__main__":
