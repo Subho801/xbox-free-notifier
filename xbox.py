@@ -1,5 +1,6 @@
 import requests
 import re
+import json
 
 
 URL = "https://www.xbox.com/en-US/games/browse"
@@ -16,7 +17,7 @@ HEADERS = {
 def main():
 
     print("================================")
-    print("Xbox Browse Auth Discovery")
+    print("Xbox Current Deals Test")
     print("================================")
 
     response = requests.get(
@@ -28,59 +29,104 @@ def main():
     print(f"HTTP Status: {response.status_code}")
     response.raise_for_status()
 
-    html = response.text
+    match = re.search(
+        r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});',
+        response.text,
+        re.DOTALL,
+    )
 
-    print(f"HTML length: {len(html)}")
+    if not match:
+        raise RuntimeError("PRELOADED_STATE not found")
+
+    state = json.loads(match.group(1))
+
+    core2 = state.get("core2", {})
+    products = core2.get("products", {})
+
+    product_summaries = products.get(
+        "productSummaries",
+        {}
+    )
+
+    availability_summaries = products.get(
+        "availabilitySummaries",
+        {}
+    )
+
+    print(
+        f"Product summaries: "
+        f"{len(product_summaries)}"
+    )
+
+    print(
+        f"Availability summaries: "
+        f"{len(availability_summaries)}"
+    )
+
     print()
+    print("DISCOUNTED PRODUCTS")
+    print("===================")
 
-    # Search for references to the browse backend
-    patterns = [
-        r"emerald\.xboxservices\.com",
-        r"xboxcomfd",
-        r"x-s2s-authorization",
-        r"x-ms-api-version",
-        r"apiVersion",
-        r"authorization",
-        r"Authorization",
-        r"clientId",
-        r"client_id",
-        r"accessToken",
-        r"serviceToken",
-    ]
+    found = 0
 
-    for pattern in patterns:
+    for product_id, sku_data in availability_summaries.items():
 
-        matches = list(
-            re.finditer(
-                pattern,
-                html,
-                re.IGNORECASE
-            )
-        )
+        for sku_id, availability_data in sku_data.items():
 
-        print(
-            f"{pattern:30} "
-            f"{len(matches)} occurrence(s)"
-        )
+            for availability_id, availability in availability_data.items():
 
-        # Show context around first few matches
-        for match in matches[:3]:
+                price = availability.get("price", {})
 
-            start = max(0, match.start() - 300)
-            end = min(
-                len(html),
-                match.end() + 500
-            )
+                discount = price.get(
+                    "discountPercentage",
+                    0
+                )
 
-            print()
-            print(
-                html[start:end]
-                .replace("\\u002F", "/")
-                .replace("\\u003A", ":")
-            )
+                list_price = price.get(
+                    "listPrice"
+                )
 
-            print()
-            print("-" * 70)
+                msrp = price.get(
+                    "msrp"
+                )
+
+                end_date = price.get(
+                    "endDateUtc"
+                )
+
+                # Only genuine discounts
+                if (
+                    isinstance(discount, (int, float))
+                    and discount > 0
+                    and isinstance(msrp, (int, float))
+                    and msrp > 0
+                ):
+
+                    product = product_summaries.get(
+                        product_id,
+                        {}
+                    )
+
+                    title = product.get(
+                        "title",
+                        "Unknown"
+                    )
+
+                    found += 1
+
+                    print()
+                    print("--------------------------------")
+                    print(f"Title:      {title}")
+                    print(f"Product ID: {product_id}")
+                    print(f"SKU:        {sku_id}")
+                    print(f"Price:      {list_price}")
+                    print(f"MSRP:       {msrp}")
+                    print(f"Discount:   {discount}%")
+                    print(f"Ends:       {end_date}")
+
+    print()
+    print("===================")
+    print(f"Discounted found: {found}")
 
 
 if __name__ == "__main__":
