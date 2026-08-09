@@ -1,113 +1,99 @@
 import requests
 import re
-from urllib.parse import urljoin
+import json
+
 
 PAGE_URL = "https://www.xbox.com/en-US/games/browse"
+API_URL = "https://emerald.xboxservices.com/xboxcomfd/browse?locale=en-US"
 
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    )
+    "User-Agent": "Mozilla/5.0",
+    "x-ms-api-version": "1.1",
 }
-
-KEYWORDS = [
-    "Search/GetMoreData",
-    "Search/GetInitialChannelData",
-    "ChannelKeyToBeUsedInResponse",
-    "EncodedCT",
-    "ChannelId",
-    "addAuthorization",
-    "RequestFactory"
-]
 
 
 def main():
     print("================================")
-    print("Xbox Emerald Request Discovery")
+    print("Xbox Browse Pagination Test")
     print("================================")
 
-    page = requests.get(
-        PAGE_URL,
-        headers=HEADERS,
-        timeout=30
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
+    # Load Xbox browse page
+    response = session.get(PAGE_URL, timeout=30)
+    response.raise_for_status()
+
+    print("✅ Xbox page loaded")
+
+    # Extract PRELOADED_STATE
+    match = re.search(
+        r"window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});",
+        response.text,
+        re.DOTALL,
     )
-    page.raise_for_status()
 
-    scripts = re.findall(
-        r'<script[^>]+src=["\']([^"\']+)["\']',
-        page.text,
-        re.I
+    if not match:
+        print("❌ PRELOADED_STATE not found")
+        return
+
+    state = json.loads(match.group(1))
+
+    print("✅ PRELOADED_STATE parsed")
+
+    # Locate browse channel
+    channel_data = (
+        state["core2"]
+        ["channels"]
+        ["channelData"]
     )
 
-    scripts = list(dict.fromkeys(
-        urljoin(PAGE_URL, x)
-        for x in scripts
-    ))
+    channel_key = "BROWSE_CHANNELID=_FILTERS="
 
-    print(f"JavaScript files: {len(scripts)}")
+    if channel_key not in channel_data:
+        print("❌ Browse channel not found")
+        print("Available channels:")
+        print(list(channel_data.keys()))
+        return
 
-    for number, url in enumerate(scripts, 1):
+    channel = channel_data[channel_key]
 
-        try:
-            r = requests.get(
-                url,
-                headers=HEADERS,
-                timeout=30
-            )
+    encoded_ct = channel["data"]["encodedCT"]
 
-            if r.status_code != 200:
-                continue
+    print("Channel:", channel_key)
+    print("Token length:", len(encoded_ct))
 
-            js = r.text
+    # Request next page
+    payload = {
+        "Filters": channel["data"].get("encodedFilters", "e30="),
+        "ReturnFilters": False,
+        "ChannelKeyToBeUsedInResponse": channel_key,
+        "EncodedCT": encoded_ct,
+    }
 
-            matches = []
+    print()
+    print("Requesting next page...")
 
-            for keyword in KEYWORDS:
-                for m in re.finditer(
-                    re.escape(keyword),
-                    js,
-                    re.I
-                ):
-                    matches.append((m.start(), keyword))
+    api_response = session.post(
+        API_URL,
+        json=payload,
+        timeout=30,
+    )
 
-            if not matches:
-                continue
+    print("HTTP Status:", api_response.status_code)
 
-            print()
-            print("=" * 100)
-            print(f"SCRIPT #{number}")
-            print(url)
-            print("=" * 100)
+    print("Response:")
+    print(api_response.text[:5000])
 
-            # Deduplicate nearby matches
-            positions = []
-            seen = set()
+    api_response.raise_for_status()
 
-            for pos, keyword in sorted(matches):
+    data = api_response.json()
 
-                bucket = pos // 3000
+    print()
+    print("✅ JSON parsed")
 
-                if bucket in seen:
-                    continue
-
-                seen.add(bucket)
-                positions.append((pos, keyword))
-
-            for pos, keyword in positions[:15]:
-
-                start = max(0, pos - 5000)
-                end = min(len(js), pos + 8000)
-
-                print()
-                print(f"KEYWORD: {keyword}")
-                print("-" * 100)
-                print(js[start:end])
-                print("-" * 100)
-
-        except Exception as e:
-            print(f"ERROR {url}: {e}")
+    print("Top-level keys:")
+    print(list(data.keys()))
 
 
 if __name__ == "__main__":
