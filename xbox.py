@@ -3,7 +3,9 @@ import re
 import json
 
 
-URL = "https://www.xbox.com/en-US/games/browse"
+PAGE_URL = "https://www.xbox.com/en-US/games/browse"
+
+CATALOG_URL = "https://displaycatalog.mp.microsoft.com/v7.0/products"
 
 HEADERS = {
     "User-Agent": (
@@ -14,83 +16,148 @@ HEADERS = {
 }
 
 
-def main():
-    print("================================")
-    print("Xbox Product Data Discovery")
-    print("================================")
-
+def get_product_ids():
     response = requests.get(
-        URL,
+        PAGE_URL,
         headers=HEADERS,
         timeout=30,
     )
 
-    print(f"HTTP Status: {response.status_code}")
     response.raise_for_status()
-
-    html = response.text
 
     match = re.search(
         r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});',
-        html,
+        response.text,
         re.DOTALL
     )
 
     if not match:
-        print("❌ PRELOADED_STATE not found")
-        return
+        raise RuntimeError("PRELOADED_STATE not found")
 
     state = json.loads(match.group(1))
 
-    print("✅ PRELOADED_STATE parsed")
+    product_ids = []
 
-    # Recursively find dictionaries containing productId
-    found = []
-
-    def walk(obj, path="root"):
+    def walk(obj):
         if isinstance(obj, dict):
 
-            keys_lower = {str(k).lower() for k in obj.keys()}
-
-            if "productid" in keys_lower:
-                found.append((path, obj))
-
             for key, value in obj.items():
-                walk(value, f"{path}.{key}")
+
+                if str(key).lower() == "productid":
+                    if isinstance(value, str):
+                        product_ids.append(value)
+
+                walk(value)
 
         elif isinstance(obj, list):
-            for index, value in enumerate(obj):
-                walk(value, f"{path}[{index}]")
+            for value in obj:
+                walk(value)
 
     walk(state)
 
-    print(f"\nFound {len(found)} objects containing productId\n")
+    # Remove duplicates while preserving order
+    return list(dict.fromkeys(product_ids))
 
-    for index, (path, obj) in enumerate(found[:10], 1):
 
-        print("=" * 70)
-        print(f"PRODUCT OBJECT #{index}")
-        print(f"Path: {path}")
-        print("=" * 70)
+def get_catalog(product_ids):
+    params = {
+        "market": "US",
+        "languages": "en-us",
+        "bigIds": ",".join(product_ids),
+    }
 
-        # Print only useful fields
-        for key, value in obj.items():
+    response = requests.get(
+        CATALOG_URL,
+        params=params,
+        headers=HEADERS,
+        timeout=30,
+    )
 
-            key_lower = str(key).lower()
+    print(f"Catalog HTTP Status: {response.status_code}")
 
-            if any(term in key_lower for term in [
-                "product",
-                "title",
-                "name",
-                "price",
-                "msrp",
-                "discount",
-                "availability",
-                "sku",
-                "url",
-                "slug"
-            ]):
-                print(f"{key}: {value}")
+    response.raise_for_status()
+
+    return response.json()
+
+
+def main():
+
+    print("================================")
+    print("Xbox Product Discovery Test")
+    print("================================")
+
+    product_ids = get_product_ids()
+
+    print(f"Found {len(product_ids)} unique product IDs")
+    print()
+
+    # Test only first 10 for now
+    test_ids = product_ids[:10]
+
+    print("Testing these IDs:")
+    for product_id in test_ids:
+        print(f"  {product_id}")
+
+    print()
+
+    data = get_catalog(test_ids)
+
+    products = data.get("Products", [])
+
+    print(f"Catalog returned {len(products)} products")
+    print()
+
+    for product in products:
+
+        product_id = product.get("ProductId")
+
+        title = "Unknown"
+
+        for prop in product.get("LocalizedProperties", []):
+            if prop.get("Language") == "en-us":
+                title = (
+                    prop.get("ProductTitle")
+                    or prop.get("Title")
+                    or "Unknown"
+                )
+                break
+
+        print("=" * 60)
+        print(f"Product ID: {product_id}")
+        print(f"Title:      {title}")
+
+        skus = product.get("DisplaySkuAvailabilities", [])
+
+        for sku_data in skus:
+
+            sku = sku_data.get("Sku", {})
+            sku_id = sku.get("SkuId")
+
+            print(f"SKU:        {sku_id}")
+
+            for availability in sku_data.get("Availabilities", []):
+
+                conditions = availability.get("Conditions", {})
+                order_data = availability.get(
+                    "OrderManagementData",
+                    {}
+                )
+                price = order_data.get("Price", {})
+
+                print(
+                    f"  Price: {price.get('ListPrice')} "
+                    f"{price.get('CurrencyCode')}"
+                )
+
+                print(
+                    f"  MSRP:  {price.get('MSRP')} "
+                    f"{price.get('CurrencyCode')}"
+                )
+
+                print(
+                    f"  End:   "
+                    f"{conditions.get('EndDate')}"
+                )
 
         print()
 
