@@ -401,6 +401,18 @@ def process_page(data, page_number):
             "discountPercentage"
         )
 
+        # TEMPORARY DEBUG
+        if list_price is not None and float(list_price) == 0:
+            print()
+            print("🔎 ZERO PRICE CANDIDATE")
+            print("Product ID:", product_id)
+            print("Title:", get_title(product_lookup.get(product_id, {})))
+            print("List Price:", list_price)
+            print("MSRP:", msrp)
+            print("Discount:", discount)
+            print("End Date:", availability.get("endDateUtc"))
+            print("Actions:", availability.get("actions"))
+            print("--------------------------------")
         if not is_100_percent_off(price):
             continue
 
