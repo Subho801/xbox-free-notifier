@@ -311,23 +311,23 @@ def process_page(data, page_number):
     )
 
     # ============================================================
-# TEMPORARY DEBUG - FIRST PAGE ONLY
-# ============================================================
+    # TEMPORARY DEBUG - FIRST PAGE ONLY
+    # ============================================================
 
-if page_number == 1:
-    print()
-    print("================================")
-    print("AVAILABILITY SAMPLE")
-    print("================================")
-
-    for availability in availability_summaries[:5]:
+    if page_number == 1:
         print()
-        print(json.dumps(availability, indent=2))
+        print("================================")
+        print("AVAILABILITY SAMPLE")
+        print("================================")
 
-    print()
-    print("================================")
-    print("END AVAILABILITY SAMPLE")
-    print("================================")
+        for availability in availability_summaries[:5]:
+            print()
+            print(json.dumps(availability, indent=2))
+
+        print()
+        print("================================")
+        print("END AVAILABILITY SAMPLE")
+        print("================================")
 
     print()
     print("--------------------------------")
