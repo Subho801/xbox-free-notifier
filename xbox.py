@@ -16,7 +16,7 @@ HEADERS = {
 
 def main():
     print("================================")
-    print("Xbox Preloaded State Test")
+    print("Xbox Product Data Discovery")
     print("================================")
 
     response = requests.get(
@@ -26,13 +26,10 @@ def main():
     )
 
     print(f"HTTP Status: {response.status_code}")
-    print(f"Content Length: {len(response.text)}")
-
     response.raise_for_status()
 
     html = response.text
 
-    # Find the preloaded state
     match = re.search(
         r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});',
         html,
@@ -40,53 +37,62 @@ def main():
     )
 
     if not match:
-        print("\n❌ PRELOADED_STATE not found")
+        print("❌ PRELOADED_STATE not found")
         return
 
-    raw_state = match.group(1)
+    state = json.loads(match.group(1))
 
-    print("\n✅ PRELOADED_STATE found")
-    print(f"State size: {len(raw_state)} characters")
+    print("✅ PRELOADED_STATE parsed")
 
-    try:
-        state = json.loads(raw_state)
-    except json.JSONDecodeError as e:
-        print("\n❌ Could not parse JSON")
-        print(e)
-        return
+    # Recursively find dictionaries containing productId
+    found = []
 
-    print("\n✅ JSON parsed successfully")
+    def walk(obj, path="root"):
+        if isinstance(obj, dict):
 
-    print("\nTop-level keys:")
-    for key in state.keys():
-        print(f"  - {key}")
+            keys_lower = {str(k).lower() for k in obj.keys()}
 
-    # Save a small summary of keys recursively
-    print("\nSearching for interesting fields...")
+            if "productid" in keys_lower:
+                found.append((path, obj))
 
-    interesting = [
-        "productId",
-        "productID",
-        "ProductId",
-        "product_id",
-        "title",
-        "name",
-        "price",
-        "Price",
-        "msrp",
-        "MSRP",
-        "discount",
-        "Discount",
-        "sale",
-        "availability",
-    ]
+            for key, value in obj.items():
+                walk(value, f"{path}.{key}")
 
-    state_text = json.dumps(state)
+        elif isinstance(obj, list):
+            for index, value in enumerate(obj):
+                walk(value, f"{path}[{index}]")
 
-    for term in interesting:
-        count = state_text.lower().count(term.lower())
-        if count:
-            print(f"  {term}: {count} occurrence(s)")
+    walk(state)
+
+    print(f"\nFound {len(found)} objects containing productId\n")
+
+    for index, (path, obj) in enumerate(found[:10], 1):
+
+        print("=" * 70)
+        print(f"PRODUCT OBJECT #{index}")
+        print(f"Path: {path}")
+        print("=" * 70)
+
+        # Print only useful fields
+        for key, value in obj.items():
+
+            key_lower = str(key).lower()
+
+            if any(term in key_lower for term in [
+                "product",
+                "title",
+                "name",
+                "price",
+                "msrp",
+                "discount",
+                "availability",
+                "sku",
+                "url",
+                "slug"
+            ]):
+                print(f"{key}: {value}")
+
+        print()
 
 
 if __name__ == "__main__":
