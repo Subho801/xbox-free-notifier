@@ -1,6 +1,7 @@
 import requests
 import re
 import json
+import base64
 
 
 URL = "https://www.xbox.com/en-US/games/browse"
@@ -14,37 +15,76 @@ HEADERS = {
 }
 
 
-def find_keys(obj, wanted, path="root"):
-    """Find every occurrence of selected keys recursively."""
+def try_decode(value):
+    """Try to decode a Base64 JSON string."""
+
+    if not isinstance(value, str):
+        return None
+
+    try:
+        decoded = base64.b64decode(
+            value + "=" * (-len(value) % 4)
+        ).decode("utf-8")
+
+        data = json.loads(decoded)
+
+        if isinstance(data, dict):
+            if (
+                "HasMore" in data
+                and "SkipCount" in data
+                and "TotalCount" in data
+            ):
+                return data
+
+    except Exception:
+        pass
+
+    return None
+
+
+def find_continuation_tokens(obj, path="root"):
+    """Recursively find Xbox continuation tokens."""
+
+    results = []
 
     if isinstance(obj, dict):
 
         for key, value in obj.items():
 
-            if str(key).lower() in wanted:
-                print()
-                print("=" * 70)
-                print(f"FOUND: {key}")
-                print(f"PATH:  {path}.{key}")
-                print("=" * 70)
+            decoded = try_decode(value)
 
-                if isinstance(value, (dict, list)):
-                    print(json.dumps(value, indent=2)[:5000])
-                else:
-                    print(value)
+            if decoded:
+                results.append({
+                    "path": f"{path}.{key}",
+                    "encoded": value,
+                    "decoded": decoded,
+                })
 
-            find_keys(value, wanted, f"{path}.{key}")
+            results.extend(
+                find_continuation_tokens(
+                    value,
+                    f"{path}.{key}"
+                )
+            )
 
     elif isinstance(obj, list):
 
         for i, value in enumerate(obj):
-            find_keys(value, wanted, f"{path}[{i}]")
+
+            results.extend(
+                find_continuation_tokens(
+                    value,
+                    f"{path}[{i}]"
+                )
+            )
+
+    return results
 
 
 def main():
 
     print("================================")
-    print("Xbox Channel Structure Test")
+    print("Xbox Continuation Token Test")
     print("================================")
 
     response = requests.get(
@@ -54,6 +94,7 @@ def main():
     )
 
     print(f"HTTP Status: {response.status_code}")
+
     response.raise_for_status()
 
     match = re.search(
@@ -63,82 +104,44 @@ def main():
     )
 
     if not match:
-        raise RuntimeError("PRELOADED_STATE not found")
+        raise RuntimeError(
+            "PRELOADED_STATE not found"
+        )
 
     state = json.loads(match.group(1))
 
     print("PRELOADED_STATE parsed")
-
-    core2 = state.get("core2", {})
-
     print()
-    print("core2 keys:")
-    print(list(core2.keys()))
 
-    # ----------------------------------------
-    # channelData
-    # ----------------------------------------
+    results = find_continuation_tokens(state)
 
-    channel_data = core2.get("channelData", {})
+    print(
+        f"Continuation tokens found: "
+        f"{len(results)}"
+    )
 
-    print()
-    print("channelData type:", type(channel_data).__name__)
+    for i, result in enumerate(results, 1):
 
-    if isinstance(channel_data, dict):
-        print("channelData keys:")
-        for key in channel_data.keys():
-            print(f"  - {key}")
+        print()
+        print("=" * 70)
+        print(f"TOKEN #{i}")
+        print("=" * 70)
 
-    # ----------------------------------------
-    # channelMetadata
-    # ----------------------------------------
+        print(f"Path:")
+        print(result["path"])
 
-    channel_metadata = core2.get("channelMetadata", {})
+        decoded = result["decoded"]
 
-    print()
-    print("channelMetadata type:", type(channel_metadata).__name__)
+        print()
+        print("Decoded:")
+        print(json.dumps(
+            decoded,
+            indent=2
+        )[:5000])
 
-    if isinstance(channel_metadata, dict):
-        print("channelMetadata keys:")
-        for key in channel_metadata.keys():
-            print(f"  - {key}")
-
-    # ----------------------------------------
-    # Search recursively
-    # ----------------------------------------
-
-    print()
-    print("================================")
-    print("Searching for browse/token fields")
-    print("================================")
-
-    wanted = {
-        "browsetype",
-        "channelkey",
-        "channelname",
-        "encodedct",
-        "continuationtoken",
-        "productids",
-        "productsummaries",
-    }
-
-    find_keys(state, wanted)
-
-    print()
-    print("================================")
-    print("Searching for product fields")
-    print("================================")
-
-    wanted_products = {
-        "productid",
-        "producttitle",
-        "title",
-        "listprice",
-        "msrp",
-        "discountpercentage",
-    }
-
-    find_keys(core2, wanted_products)
+        print()
+        print("EncodedCT length:")
+        print(len(result["encoded"]))
 
 
 if __name__ == "__main__":
