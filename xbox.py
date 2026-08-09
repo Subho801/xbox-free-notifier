@@ -17,7 +17,7 @@ HEADERS = {
 def main():
 
     print("================================")
-    print("Xbox JavaScript API Discovery")
+    print("Xbox Authorization Discovery")
     print("================================")
 
     response = requests.get(
@@ -26,13 +26,10 @@ def main():
         timeout=30,
     )
 
-    print(f"HTTP Status: {response.status_code}")
-
     response.raise_for_status()
 
     html = response.text
 
-    # Find JS files
     scripts = re.findall(
         r'<script[^>]+src=["\']([^"\']+)["\']',
         html,
@@ -44,89 +41,80 @@ def main():
         for src in scripts
     ))
 
-    print(f"JavaScript files found: {len(scripts)}")
+    print(f"JavaScript files: {len(scripts)}")
     print()
 
-    interesting = [
+    keywords = [
+        "addAuthorization",
+        "MsApiVersion",
+        "Authorization",
         "x-s2s-authorization",
-        "emerald.xboxservices.com",
-        "xboxcomfd",
-        "EncodedCT",
-        "ChannelKeyToBeUsedInResponse",
+        "s2s-authorization",
+        "getAuthorization",
+        "authorizationToken",
+        "accessToken",
     ]
-
-    found_any = False
 
     for index, script_url in enumerate(scripts, 1):
 
-        print(
-            f"[{index}/{len(scripts)}] "
-            f"{script_url}"
-        )
-
         try:
 
-            js_response = requests.get(
+            r = requests.get(
                 script_url,
                 headers=HEADERS,
                 timeout=30,
             )
 
-            if js_response.status_code != 200:
+            if r.status_code != 200:
                 continue
 
-            js = js_response.text
+            js = r.text
 
-            matches = []
+            found = False
 
-            for keyword in interesting:
+            for keyword in keywords:
 
-                if keyword.lower() in js.lower():
-                    matches.append(keyword)
+                positions = [
+                    m.start()
+                    for m in re.finditer(
+                        re.escape(keyword),
+                        js,
+                        re.IGNORECASE
+                    )
+                ]
 
-            if not matches:
-                continue
+                if not positions:
+                    continue
 
-            found_any = True
-
-            print("  ✅ MATCH:", ", ".join(matches))
-
-            for keyword in matches:
-
-                pos = js.lower().find(
-                    keyword.lower()
-                )
-
-                start = max(0, pos - 500)
-                end = min(
-                    len(js),
-                    pos + 1500
-                )
+                found = True
 
                 print()
-                print(
-                    js[start:end]
-                )
+                print("=" * 90)
+                print(f"SCRIPT #{index}")
+                print(script_url)
+                print(f"KEYWORD: {keyword}")
+                print(f"OCCURRENCES: {len(positions)}")
+                print("=" * 90)
+
+                # Only print the first 5 occurrences
+                for position in positions[:5]:
+
+                    start = max(0, position - 1200)
+                    end = min(
+                        len(js),
+                        position + 2500
+                    )
+
+                    print()
+                    print(js[start:end])
+                    print()
+                    print("-" * 90)
+
+            if found:
                 print()
-                print("-" * 80)
 
         except Exception as e:
-
-            print(
-                f"  ⚠️ Error: {e}"
-            )
-
-    print()
-
-    if not found_any:
-        print(
-            "❌ No relevant API references "
-            "found in downloaded scripts."
-        )
-    else:
-        print(
-            "✅ Relevant Xbox API code found."
-        )
+            print(f"Error: {e}")
 
 
 if __name__ == "__main__":
