@@ -3,7 +3,7 @@ import re
 import json
 
 
-URL = "https://www.xbox.com/en-US/games/browse"
+URL = "https://www.xbox.com/en-US/games/browse?Price=Free"
 
 HEADERS = {
     "User-Agent": (
