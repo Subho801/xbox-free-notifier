@@ -1,6 +1,7 @@
 import json
 import re
 import requests
+from datetime import datetime
 
 
 PAGE_URL = "https://www.xbox.com/en-US/games/browse"
@@ -12,6 +13,9 @@ API_URL = (
 
 CHANNEL_KEY = "BROWSE_CHANNELID=_FILTERS="
 
+# Start small while testing.
+# 5 pages = up to 125 Xbox products.
+MAX_PAGES = 5
 
 HEADERS = {
     "User-Agent": (
@@ -26,8 +30,11 @@ HEADERS = {
 }
 
 
+# ============================================================
+# LOAD XBOX BROWSE PAGE
+# ============================================================
+
 def get_preloaded_state(session):
-    """Load Xbox browse page and extract PRELOADED_STATE."""
 
     response = session.get(
         PAGE_URL,
@@ -49,17 +56,18 @@ def get_preloaded_state(session):
             "PRELOADED_STATE not found"
         )
 
-    state = json.loads(
-        match.group(1)
-    )
+    state = json.loads(match.group(1))
 
     print("✅ PRELOADED_STATE parsed")
 
     return state
 
 
+# ============================================================
+# GET BROWSE CHANNEL
+# ============================================================
+
 def get_channel(state):
-    """Get the Xbox browse channel."""
 
     channel_data = (
         state
@@ -69,36 +77,29 @@ def get_channel(state):
     )
 
     if CHANNEL_KEY not in channel_data:
-        print("❌ Browse channel not found")
-        print()
-        print("Available channels:")
-
-        for key in channel_data:
-            print(" -", key)
-
         raise RuntimeError(
-            "Browse channel not found"
+            f"Browse channel not found: {CHANNEL_KEY}"
         )
 
     return channel_data[CHANNEL_KEY]
 
 
+# ============================================================
+# REQUEST NEXT PAGE
+# ============================================================
+
 def get_next_page(
     session,
     encoded_ct,
-    encoded_filters=None,
+    encoded_filters="",
 ):
-    """Request the next Xbox catalog page."""
 
     payload = {
-        "Filters": encoded_filters or "",
+        "Filters": encoded_filters,
         "ReturnFilters": False,
         "ChannelKeyToBeUsedInResponse": CHANNEL_KEY,
         "EncodedCT": encoded_ct,
     }
-
-    print()
-    print("Requesting Xbox catalog page...")
 
     response = session.post(
         API_URL,
@@ -111,373 +112,212 @@ def get_next_page(
         response.status_code,
     )
 
+    if response.status_code != 200:
+        print("Response:")
+        print(response.text[:2000])
+
     response.raise_for_status()
 
     return response.json()
 
 
-def normalize_products(product_summaries):
+# ============================================================
+# NORMALIZE XBOX DATA
+# ============================================================
+
+def normalize_collection(value):
+
     """
-    Convert product summaries into:
-    
+    Xbox may return some collections as either:
+
         {
-            product_id: product_object
+            "PRODUCT_ID": {...}
         }
 
-    Xbox may return this as either a list or dictionary.
+    or:
+
+        [
+            {
+                "productId": "PRODUCT_ID",
+                ...
+            }
+        ]
+
+    Convert both forms into a list of dictionaries.
     """
 
-    if isinstance(
-        product_summaries,
-        list,
-    ):
-
-        result = {}
-
-        for product in product_summaries:
-
-            if not isinstance(
-                product,
-                dict,
-            ):
-                continue
-
-            product_id = product.get(
-                "productId"
-            )
-
-            if product_id:
-                result[product_id] = product
-
-        return result
-
-    if isinstance(
-        product_summaries,
-        dict,
-    ):
-
-        return product_summaries
-
-    return {}
-
-
-def normalize_availabilities(
-    availability_summaries
-):
-    """
-    Convert availability summaries into
-    a simple list of availability objects.
-    """
-
-    if isinstance(
-        availability_summaries,
-        list,
-    ):
+    if isinstance(value, list):
 
         return [
             item
-            for item in availability_summaries
+            for item in value
             if isinstance(item, dict)
         ]
 
-    if isinstance(
-        availability_summaries,
-        dict,
-    ):
+    if isinstance(value, dict):
 
         result = []
 
-        for key, value in (
-            availability_summaries.items()
-        ):
+        for key, item in value.items():
 
-            if isinstance(
-                value,
-                dict,
-            ):
+            if not isinstance(item, dict):
+                continue
 
-                # Preserve the key if the
-                # availability object doesn't
-                # contain its own ID.
-                if "availabilityId" not in value:
-                    value = dict(value)
-                    value["availabilityId"] = key
+            item = dict(item)
 
-                result.append(value)
+            if "productId" not in item:
+                item["productId"] = key
 
-            elif isinstance(
-                value,
-                list,
-            ):
-
-                for item in value:
-
-                    if not isinstance(
-                        item,
-                        dict,
-                    ):
-                        continue
-
-                    item = dict(item)
-
-                    if "availabilityId" not in item:
-                        item["availabilityId"] = key
-
-                    result.append(item)
+            result.append(item)
 
         return result
 
     return []
 
 
-def find_free_games(
-    product_summaries,
-    availability_summaries,
-):
-    """Find genuine temporary 100% OFF games."""
+# ============================================================
+# GET PRODUCT ID
+# ============================================================
 
-    products_by_id = normalize_products(
-        product_summaries
+def get_product_id(item):
+
+    if not isinstance(item, dict):
+        return None
+
+    return (
+        item.get("productId")
+        or item.get("productID")
+        or item.get("ProductId")
+        or item.get("ProductID")
     )
 
-    availability_list = normalize_availabilities(
-        availability_summaries
+
+# ============================================================
+# GET TITLE
+# ============================================================
+
+def get_title(product):
+
+    if not isinstance(product, dict):
+        return "Unknown"
+
+    return (
+        product.get("title")
+        or product.get("name")
+        or product.get("displayName")
+        or product.get("DisplayName")
+        or "Unknown"
     )
 
-    print()
-    print("Normalized products:")
-    print(len(products_by_id))
 
-    print(
-        "Normalized availabilities:"
-    )
-    print(len(availability_list))
+# ============================================================
+# EXTRACT PRICE
+# ============================================================
 
-    found_games = []
+def get_price_data(availability):
 
-    for availability in availability_list:
+    if not isinstance(availability, dict):
+        return None
 
-        product_id = availability.get(
-            "productId"
+    price = availability.get("price")
+
+    if isinstance(price, dict):
+        return price
+
+    # Some Xbox responses may expose the fields directly.
+    if any(
+        key in availability
+        for key in (
+            "listPrice",
+            "msrp",
+            "discountPercentage",
         )
+    ):
+        return availability
 
-        if not product_id:
-            continue
+    return None
 
-        product = products_by_id.get(
-            product_id,
-            {}
-        )
 
-        title = (
-            product.get("title")
-            or product.get("name")
-            or product.get("displayName")
-            or "Unknown"
-        )
+# ============================================================
+# CHECK IF ACTUALLY FREE
+# ============================================================
 
-        price = availability.get(
-            "price"
-        )
+def is_100_percent_off(price):
 
-        if not isinstance(
-            price,
-            dict,
+    if not isinstance(price, dict):
+        return False
+
+    list_price = price.get("listPrice")
+    msrp = price.get("msrp")
+    discount = price.get("discountPercentage")
+
+    # Explicit 100% discount
+    if discount is not None:
+
+        try:
+            if float(discount) >= 100:
+                return True
+        except (
+            TypeError,
+            ValueError,
         ):
-            continue
+            pass
 
-        list_price = price.get(
-            "listPrice"
-        )
+    # Price is zero but MSRP is greater than zero.
+    if (
+        list_price is not None
+        and msrp is not None
+    ):
 
-        msrp = price.get(
-            "msrp"
-        )
+        try:
+            if (
+                float(list_price) == 0
+                and float(msrp) > 0
+            ):
+                return True
+        except (
+            TypeError,
+            ValueError,
+        ):
+            pass
 
-        discount = price.get(
-            "discountPercentage"
-        )
-
-        end_date = price.get(
-            "endDateUtc"
-        )
-
-        # We only want genuine temporary
-        # 100% OFF promotions.
-        #
-        # Permanent free games generally have:
-        #
-        #     listPrice = 0
-        #     msrp = 0
-        #
-        # A real giveaway should have:
-        #
-        #     listPrice = 0
-        #     msrp > 0
-        #     discount ~= 100%
-
-        is_free = (
-            list_price == 0
-            and isinstance(
-                msrp,
-                (int, float),
-            )
-            and msrp > 0
-            and isinstance(
-                discount,
-                (int, float),
-            )
-            and discount >= 99.9
-        )
-
-        if not is_free:
-            continue
-
-        game = {
-            "title": title,
-            "productId": product_id,
-            "availabilityId": availability.get(
-                "availabilityId"
-            ),
-            "listPrice": list_price,
-            "msrp": msrp,
-            "discountPercentage": discount,
-            "endDateUtc": end_date,
-        }
-
-        found_games.append(game)
-
-    return found_games
+    return False
 
 
-def main():
+# ============================================================
+# PROCESS ONE PAGE
+# ============================================================
 
-    print("================================")
-    print("Xbox 100% OFF Discovery")
-    print("================================")
+def process_page(data, page_number):
 
-    session = requests.Session()
-
-    session.headers.update(
-        HEADERS
+    channel = (
+        data
+        .get("channels", {})
+        .get(CHANNEL_KEY, {})
     )
 
-    # --------------------------------
-    # Load Xbox browse page
-    # --------------------------------
+    products = channel.get("products", [])
 
-    state = get_preloaded_state(
-        session
+    product_summaries = normalize_collection(
+        data.get("productSummaries", [])
     )
 
-    # --------------------------------
-    # Get browse channel
-    # --------------------------------
-
-    channel = get_channel(
-        state
+    sku_summaries = normalize_collection(
+        data.get("skuSummaries", [])
     )
 
-    channel_data = channel.get(
-        "data",
-        {}
-    )
-
-    encoded_ct = channel_data.get(
-        "encodedCT"
-    )
-
-    encoded_filters = channel_data.get(
-        "encodedFilters",
-        ""
-    )
-
-    if not encoded_ct:
-        raise RuntimeError(
-            "Initial continuation token not found"
-        )
-
-    print()
-    print(
-        "Channel:",
-        CHANNEL_KEY,
-    )
-
-    print(
-        "Initial token length:",
-        len(encoded_ct),
-    )
-
-    # --------------------------------
-    # Get next catalog page
-    # --------------------------------
-
-    data = get_next_page(
-        session,
-        encoded_ct,
-        encoded_filters,
+    availability_summaries = normalize_collection(
+        data.get("availabilitySummaries", [])
     )
 
     print()
-    print(
-        "✅ Browse response received"
-    )
-
-    # --------------------------------
-    # Extract returned data
-    # --------------------------------
-
-    channels = data.get(
-        "channels",
-        {}
-    )
-
-    browse_channel = channels.get(
-        CHANNEL_KEY,
-        {}
-    )
-
-    products = browse_channel.get(
-        "products",
-        []
-    )
-
-    total_items = browse_channel.get(
-        "totalItems"
-    )
-
-    next_encoded_ct = browse_channel.get(
-        "encodedCT"
-    )
-
-    product_summaries = data.get(
-        "productSummaries",
-        []
-    )
-
-    sku_summaries = data.get(
-        "skuSummaries",
-        []
-    )
-
-    availability_summaries = data.get(
-        "availabilitySummaries",
-        []
-    )
-
-    print()
-    print("================================")
-    print("CATALOG DATA")
-    print("================================")
+    print("--------------------------------")
+    print(f"PAGE {page_number}")
+    print("--------------------------------")
 
     print(
         "Products:",
         len(products),
-    )
-
-    print(
-        "Total Xbox items:",
-        total_items,
     )
 
     print(
@@ -495,52 +335,92 @@ def main():
         len(availability_summaries),
     )
 
-    print(
-        "Next token:",
-        (
-            "YES"
-            if next_encoded_ct
-            else "NO"
-        ),
-    )
+    # --------------------------------------------------------
+    # Build product lookup
+    # --------------------------------------------------------
 
-    if next_encoded_ct:
+    product_lookup = {}
 
-        print(
-            "Next token length:",
-            len(next_encoded_ct),
+    for product in product_summaries:
+
+        product_id = get_product_id(product)
+
+        if product_id:
+            product_lookup[product_id] = product
+
+    # --------------------------------------------------------
+    # Check availability records
+    # --------------------------------------------------------
+
+    found = []
+
+    for availability in availability_summaries:
+
+        product_id = get_product_id(
+            availability
         )
 
-    # --------------------------------
-    # Search for 100% OFF
-    # --------------------------------
+        if not product_id:
+            continue
 
-    print()
-    print("================================")
-    print("CHECKING FOR 100% OFF")
-    print("================================")
-
-    free_games = find_free_games(
-        product_summaries,
-        availability_summaries,
-    )
-
-    if not free_games:
-
-        print()
-        print(
-            "No genuine temporary "
-            "100% OFF games found."
+        price = get_price_data(
+            availability
         )
 
-    else:
+        if not price:
+            continue
 
-        for game in free_games:
+        list_price = price.get(
+            "listPrice"
+        )
+
+        msrp = price.get(
+            "msrp"
+        )
+
+        discount = price.get(
+            "discountPercentage"
+        )
+
+        if not is_100_percent_off(price):
+            continue
+
+        product = product_lookup.get(
+            product_id,
+            {},
+        )
+
+        title = get_title(product)
+
+        availability_id = (
+            availability.get("availabilityId")
+            or availability.get("id")
+            or availability.get("AvailabilityId")
+        )
+
+        found.append(
+            {
+                "title": title,
+                "productId": product_id,
+                "availabilityId": availability_id,
+                "listPrice": list_price,
+                "msrp": msrp,
+                "discount": discount,
+            }
+        )
+
+    # --------------------------------------------------------
+    # Print results
+    # --------------------------------------------------------
+
+    if found:
+
+        for game in found:
 
             print()
-            print("--------------------------------")
-            print("🔥 FREE GAME FOUND")
-            print("--------------------------------")
+            print("================================")
+            print("🎉 100% OFF GAME FOUND")
+            print("================================")
 
             print(
                 "Title:",
@@ -569,20 +449,249 @@ def main():
 
             print(
                 "Discount:",
-                game["discountPercentage"],
+                game["discount"],
+            )
+
+    return found
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print("================================")
+    print("Xbox 100% OFF PAGINATION TEST")
+    print("================================")
+
+    session = requests.Session()
+
+    session.headers.update(
+        HEADERS
+    )
+
+    # --------------------------------------------------------
+    # Load first Xbox page
+    # --------------------------------------------------------
+
+    state = get_preloaded_state(
+        session
+    )
+
+    channel = get_channel(
+        state
+    )
+
+    encoded_ct = (
+        channel
+        .get("data", {})
+        .get("encodedCT")
+    )
+
+    encoded_filters = (
+        channel
+        .get("data", {})
+        .get("encodedFilters", "")
+    )
+
+    if not encoded_ct:
+
+        raise RuntimeError(
+            "Initial continuation token not found"
+        )
+
+    print(
+        "Channel:",
+        CHANNEL_KEY,
+    )
+
+    print(
+        "Initial token length:",
+        len(encoded_ct),
+    )
+
+    print()
+    print(
+        "Starting pagination..."
+    )
+
+    # --------------------------------------------------------
+    # Pagination
+    # --------------------------------------------------------
+
+    total_found = []
+
+    page = 1
+
+    while page <= MAX_PAGES:
+
+        print()
+        print("================================")
+        print(
+            f"REQUESTING PAGE {page}"
+        )
+        print("================================")
+
+        data = get_next_page(
+            session,
+            encoded_ct,
+            encoded_filters,
+        )
+
+        print(
+            "✅ Browse response received"
+        )
+
+        # ----------------------------------------------------
+        # Process current page
+        # ----------------------------------------------------
+
+        found = process_page(
+            data,
+            page,
+        )
+
+        total_found.extend(
+            found
+        )
+
+        # ----------------------------------------------------
+        # Get continuation token
+        # ----------------------------------------------------
+
+        channel_response = (
+            data
+            .get("channels", {})
+            .get(CHANNEL_KEY, {})
+        )
+
+        next_token = (
+            channel_response
+            .get("encodedCT")
+        )
+
+        total_items = (
+            channel_response
+            .get("totalItems")
+        )
+
+        print()
+        print(
+            "Total Xbox items:",
+            total_items,
+        )
+
+        if not next_token:
+
+            print()
+            print(
+                "No continuation token."
             )
 
             print(
-                "Ends:",
-                game["endDateUtc"],
+                "Reached final page."
             )
+
+            break
+
+        print(
+            "Next token: YES"
+        )
+
+        print(
+            "Next token length:",
+            len(next_token),
+        )
+
+        # ----------------------------------------------------
+        # Move to next page
+        # ----------------------------------------------------
+
+        encoded_ct = next_token
+
+        page += 1
+
+    # --------------------------------------------------------
+    # FINAL RESULTS
+    # --------------------------------------------------------
 
     print()
     print("================================")
+    print("PAGINATION FINISHED")
+    print("================================")
+
+    print(
+        "Pages checked:",
+        page
+        if page <= MAX_PAGES
+        else MAX_PAGES,
+    )
+
     print(
         "100% OFF FOUND:",
-        len(free_games),
+        len(total_found),
     )
+
+    # --------------------------------------------------------
+    # Remove duplicates
+    # --------------------------------------------------------
+
+    unique = {}
+
+    for game in total_found:
+
+        key = (
+            game["productId"],
+            game["availabilityId"],
+        )
+
+        unique[key] = game
+
+    if unique:
+
+        print()
+        print("================================")
+        print("FREE GAMES")
+        print("================================")
+
+        for game in unique.values():
+
+            print()
+            print(
+                "Title:",
+                game["title"],
+            )
+
+            print(
+                "Product ID:",
+                game["productId"],
+            )
+
+            print(
+                "Price:",
+                game["listPrice"],
+            )
+
+            print(
+                "MSRP:",
+                game["msrp"],
+            )
+
+            print(
+                "Discount:",
+                game["discount"],
+            )
+
+    else:
+
+        print()
+        print(
+            "No 100% OFF games found "
+            "in the pages checked."
+        )
+
+    print()
     print("================================")
 
 
