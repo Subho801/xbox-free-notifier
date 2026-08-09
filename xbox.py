@@ -17,7 +17,7 @@ HEADERS = {
 def main():
 
     print("================================")
-    print("Xbox Current Deals Test")
+    print("Xbox 100% OFF Test")
     print("================================")
 
     response = requests.get(
@@ -54,17 +54,15 @@ def main():
     )
 
     print(
-        f"Product summaries: "
-        f"{len(product_summaries)}"
+        f"Products: {len(product_summaries)}"
     )
 
     print(
-        f"Availability summaries: "
-        f"{len(availability_summaries)}"
+        f"Availabilities: {len(availability_summaries)}"
     )
 
     print()
-    print("DISCOUNTED PRODUCTS")
+    print("100% OFF CANDIDATES")
     print("===================")
 
     found = 0
@@ -77,29 +75,27 @@ def main():
 
                 price = availability.get("price", {})
 
-                discount = price.get(
-                    "discountPercentage",
-                    0
-                )
+                list_price = price.get("listPrice")
+                msrp = price.get("msrp")
+                discount = price.get("discountPercentage")
+                end_date = price.get("endDateUtc")
 
-                list_price = price.get(
-                    "listPrice"
-                )
+                # Genuine temporary free candidate:
+                #
+                # MSRP > 0
+                # Current price == 0
+                # Discount >= 99.9%
+                # Has a finite end date
 
-                msrp = price.get(
-                    "msrp"
-                )
-
-                end_date = price.get(
-                    "endDateUtc"
-                )
-
-                # Only genuine discounts
                 if (
-                    isinstance(discount, (int, float))
-                    and discount > 0
-                    and isinstance(msrp, (int, float))
+                    isinstance(msrp, (int, float))
                     and msrp > 0
+                    and list_price == 0
+                    and isinstance(discount, (int, float))
+                    and discount >= 99.9
+                    and end_date
+                    and "9998" not in end_date
+                    and "9999" not in end_date
                 ):
 
                     product = product_summaries.get(
@@ -107,9 +103,10 @@ def main():
                         {}
                     )
 
-                    title = product.get(
-                        "title",
-                        "Unknown"
+                    title = (
+                        product.get("title")
+                        or product.get("name")
+                        or "Unknown"
                     )
 
                     found += 1
@@ -119,14 +116,15 @@ def main():
                     print(f"Title:      {title}")
                     print(f"Product ID: {product_id}")
                     print(f"SKU:        {sku_id}")
-                    print(f"Price:      {list_price}")
+                    print(f"Availability: {availability_id}")
+                    print(f"Current:    {list_price}")
                     print(f"MSRP:       {msrp}")
                     print(f"Discount:   {discount}%")
                     print(f"Ends:       {end_date}")
 
     print()
     print("===================")
-    print(f"Discounted found: {found}")
+    print(f"100% OFF found: {found}")
 
 
 if __name__ == "__main__":
