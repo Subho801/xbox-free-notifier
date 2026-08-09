@@ -17,60 +17,53 @@ HEADERS = {
 def main():
 
     print("================================")
-    print("Xbox Authorization Discovery")
+    print("Xbox Browse Authorization Trace")
     print("================================")
 
-    response = requests.get(
+    r = requests.get(
         PAGE_URL,
         headers=HEADERS,
-        timeout=30,
+        timeout=30
     )
 
-    response.raise_for_status()
-
-    html = response.text
+    r.raise_for_status()
 
     scripts = re.findall(
         r'<script[^>]+src=["\']([^"\']+)["\']',
-        html,
-        re.IGNORECASE,
+        r.text,
+        re.I
     )
 
     scripts = list(dict.fromkeys(
-        urljoin(PAGE_URL, src)
-        for src in scripts
+        urljoin(PAGE_URL, x)
+        for x in scripts
     ))
 
     print(f"JavaScript files: {len(scripts)}")
-    print()
 
     keywords = [
-        "addAuthorization",
+        "addAuthorization:!0",
+        "addAuthorization:true",
         "MsApiVersion",
-        "Authorization",
-        "x-s2s-authorization",
-        "s2s-authorization",
-        "getAuthorization",
-        "authorizationToken",
-        "accessToken",
+        "EmeraldXbetService",
+        "getOrFetchXboxToken",
+        "xboxToken",
     ]
 
-    for index, script_url in enumerate(scripts, 1):
+    for script_number, url in enumerate(scripts, 1):
 
         try:
 
-            r = requests.get(
-                script_url,
+            js_response = requests.get(
+                url,
                 headers=HEADERS,
-                timeout=30,
+                timeout=30
             )
 
-            if r.status_code != 200:
+            if js_response.status_code != 200:
                 continue
 
-            js = r.text
-
-            found = False
+            js = js_response.text
 
             for keyword in keywords:
 
@@ -79,42 +72,36 @@ def main():
                     for m in re.finditer(
                         re.escape(keyword),
                         js,
-                        re.IGNORECASE
+                        re.I
                     )
                 ]
 
                 if not positions:
                     continue
 
-                found = True
-
                 print()
-                print("=" * 90)
-                print(f"SCRIPT #{index}")
-                print(script_url)
+                print("=" * 100)
+                print(f"SCRIPT #{script_number}")
+                print(url)
                 print(f"KEYWORD: {keyword}")
                 print(f"OCCURRENCES: {len(positions)}")
-                print("=" * 90)
+                print("=" * 100)
 
-                # Only print the first 5 occurrences
-                for position in positions[:5]:
+                for pos in positions[:10]:
 
-                    start = max(0, position - 1200)
+                    start = max(0, pos - 4000)
                     end = min(
                         len(js),
-                        position + 2500
+                        pos + 6000
                     )
 
-                    print()
                     print(js[start:end])
                     print()
-                    print("-" * 90)
-
-            if found:
-                print()
+                    print("-" * 100)
 
         except Exception as e:
-            print(f"Error: {e}")
+
+            print(f"ERROR: {e}")
 
 
 if __name__ == "__main__":
