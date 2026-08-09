@@ -3,130 +3,161 @@ import re
 import json
 
 
-URL = "https://www.xbox.com/en-US/games/browse"
+PAGE_URL = "https://www.xbox.com/en-US/games/browse"
+
+BROWSE_API = "https://emerald.xboxservices.com/xboxcomfd/browse"
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/131.0.0.0 Safari/537.36"
-    )
+    ),
+    "Accept": "application/json",
 }
 
 
 def main():
+
     print("================================")
-    print("Xbox Browse State Analysis")
+    print("Xbox Browse API Discovery")
     print("================================")
 
+    # --------------------------------------------------
+    # 1. Get Xbox browse page
+    # --------------------------------------------------
+
     response = requests.get(
-        URL,
+        PAGE_URL,
         headers=HEADERS,
         timeout=30,
     )
 
-    print(f"HTTP Status: {response.status_code}")
+    print(f"Page HTTP Status: {response.status_code}")
+
     response.raise_for_status()
+
+    # --------------------------------------------------
+    # 2. Extract PRELOADED_STATE
+    # --------------------------------------------------
 
     match = re.search(
         r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});',
         response.text,
-        re.DOTALL
+        re.DOTALL,
     )
 
     if not match:
-        print("PRELOADED_STATE not found")
-        return
+        raise RuntimeError("PRELOADED_STATE not found")
 
     state = json.loads(match.group(1))
 
     print("PRELOADED_STATE parsed")
-    print()
 
-    # Search the entire state for strings related to
-    # deals, discounts and free games.
-    keywords = [
-        "deal",
-        "deals",
-        "discount",
-        "discounts",
-        "free",
-        "sale",
-        "special",
-        "promotion",
-        "offer",
-    ]
+    # --------------------------------------------------
+    # 3. Inspect channels
+    # --------------------------------------------------
 
-    state_text = json.dumps(state).lower()
+    core2 = state.get("core2", {})
 
-    print("Keyword occurrences:")
-    print("--------------------")
-
-    for keyword in keywords:
-        print(f"{keyword:12} {state_text.count(keyword)}")
+    channels = core2.get("channels", {})
 
     print()
+    print("core2 channels:")
+    print(list(channels.keys()))
 
-    # Find dictionaries containing useful combinations
-    # such as productId + price + discount.
-    matches = []
+    # --------------------------------------------------
+    # 4. Find BROWSE_ channel
+    # --------------------------------------------------
 
-    def walk(obj, path="root"):
-        if isinstance(obj, dict):
+    browse = channels.get("BROWSE_")
 
-            keys = {str(k).lower() for k in obj.keys()}
-
-            has_product = "productid" in keys
-            has_price = any(
-                k in keys
-                for k in ["price", "listprice", "msrp"]
-            )
-            has_discount = any(
-                k in keys
-                for k in ["discount", "discountpercentage"]
-            )
-
-            if has_product and (has_price or has_discount):
-                matches.append((path, obj))
-
-            for key, value in obj.items():
-                walk(value, f"{path}.{key}")
-
-        elif isinstance(obj, list):
-            for i, value in enumerate(obj):
-                walk(value, f"{path}[{i}]")
-
-    walk(state)
-
-    print(f"Objects containing product + pricing fields: {len(matches)}")
-    print()
-
-    for i, (path, obj) in enumerate(matches[:20], 1):
-
-        print("=" * 70)
-        print(f"OBJECT #{i}")
-        print(f"PATH: {path}")
-        print("=" * 70)
-
-        for key, value in obj.items():
-
-            key_lower = str(key).lower()
-
-            if any(term in key_lower for term in [
-                "product",
-                "title",
-                "name",
-                "price",
-                "msrp",
-                "discount",
-                "sale",
-                "deal",
-                "offer",
-                "availability",
-            ]):
-                print(f"{key}: {value}")
-
+    if not browse:
         print()
+        print("❌ BROWSE_ channel not found")
+        return
+
+    print()
+    print("✅ BROWSE_ channel found")
+
+    print("BROWSE_ keys:")
+    print(list(browse.keys()))
+
+    data = browse.get("data")
+
+    if not data:
+        print()
+        print("❌ BROWSE_ data not found")
+        return
+
+    print()
+    print("BROWSE_ data keys:")
+    print(list(data.keys()))
+
+    # --------------------------------------------------
+    # 5. Check for encoded continuation token
+    # --------------------------------------------------
+
+    encoded_ct = data.get("encodedCT")
+
+    print()
+
+    if encoded_ct:
+        print("✅ encodedCT found")
+        print(f"encodedCT length: {len(encoded_ct)}")
+        print(f"encodedCT preview: {encoded_ct[:100]}...")
+    else:
+        print("❌ encodedCT not found")
+
+    # --------------------------------------------------
+    # 6. Check products already returned
+    # --------------------------------------------------
+
+    products = data.get("productSummaries", [])
+
+    print()
+    print(f"Products in BROWSE_ data: {len(products)}")
+
+    for product in products[:5]:
+        print()
+        print("Product:")
+        print(f"  ID:    {product.get('productId')}")
+        print(f"  Title: {product.get('title')}")
+
+    # --------------------------------------------------
+    # 7. Test browse API if token exists
+    # --------------------------------------------------
+
+    if not encoded_ct:
+        return
+
+    print()
+    print("================================")
+    print("Testing Xbox Browse Backend")
+    print("================================")
+
+    payload = {
+        "ChannelKeyToBeUsedInResponse": "BROWSE_",
+        "EncodedCT": encoded_ct,
+        "Filters": "e30=",
+        "ReturnFilters": False,
+    }
+
+    browse_response = requests.post(
+        BROWSE_API,
+        headers=HEADERS,
+        json=payload,
+        timeout=30,
+    )
+
+    print(
+        f"Browse API HTTP Status: "
+        f"{browse_response.status_code}"
+    )
+
+    print()
+    print("Response preview:")
+    print(browse_response.text[:5000])
 
 
 if __name__ == "__main__":
